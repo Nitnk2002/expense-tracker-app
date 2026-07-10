@@ -2,10 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Base URL for physical device testing over local network (Host IP)
 // AuthService runs on 9898
-export const API_BASE_URL = 'http://177.171.101.42:9898';
+export const API_BASE_URL = 'https://nitnkumar-expense-ai.hf.space/auth';
 
 // ExpenseService runs on 9820
-export const EXPENSE_API_BASE_URL = 'http://177.171.101.42:9820';
+export const EXPENSE_API_BASE_URL = 'https://nitnkumar-expense-ai.hf.space/expense';
 
 interface FetchOptions extends RequestInit {
   requireAuth?: boolean;

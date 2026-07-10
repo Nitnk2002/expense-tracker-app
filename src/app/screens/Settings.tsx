@@ -2,6 +2,7 @@ import React, { useContext, useState, useEffect } from 'react';
 import { View, StyleSheet, SafeAreaView, Switch, TouchableOpacity, TextInput, ScrollView, Alert, ToastAndroid, LayoutAnimation, UIManager, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthContext } from '../context/AuthContext';
+import { ExpenseContext } from '../context/ExpenseContext';
 import { Typography } from '../components/Typography';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -9,7 +10,10 @@ import { Dialog } from '../components/Dialog';
 import { FadeInView } from '../components/FadeInView';
 import { spacing, rounded } from '../theme/tokens';
 import { useTheme } from '../context/ThemeContext';
+import { apiClient, EXPENSE_API_BASE_URL, AUTH_API_BASE_URL } from '../api/apiClient';
+import { ChevronRight } from 'lucide-react-native';
 import { Logo } from '../components/Logo';
+import { exportToCSV } from '../utils/exportUtils';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -17,6 +21,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 const Settings = ({ navigation }: any) => {
   const { logout, userId } = useContext(AuthContext);
+  const { expenses } = useContext(ExpenseContext);
   const { colors, isDarkMode, toggleTheme, themeMode, setThemeMode } = useTheme();
   
   // States
@@ -30,6 +35,41 @@ const Settings = ({ navigation }: any) => {
   const [phone, setPhone] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
+  // New States for Specification alignment
+  const [currency, setCurrency] = useState('INR');
+  const [categoriesList, setCategoriesList] = useState(['Food', 'Transport', 'Shopping', 'Bills', 'Entertainment', 'Health', 'General', 'Salary']);
+  const [newCategory, setNewCategory] = useState('');
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+
+  const handleAddCategory = async () => {
+    if (!newCategory.trim()) return;
+    if (categoriesList.includes(newCategory.trim())) {
+      ToastAndroid.show('Category already exists!', ToastAndroid.SHORT);
+      return;
+    }
+    const catName = newCategory.trim();
+    
+    // Save to backend
+    try {
+      const response = await apiClient('/expense/v1/categories', {
+        baseUrl: EXPENSE_API_BASE_URL,
+        method: 'POST',
+        body: JSON.stringify({ name: catName, userId: userId })
+      });
+      
+      if (response.ok) {
+        setCategoriesList([...categoriesList, catName]);
+        setNewCategory('');
+        ToastAndroid.show('Category saved to cloud!', ToastAndroid.SHORT);
+      } else {
+        ToastAndroid.show('Failed to save category to cloud.', ToastAndroid.SHORT);
+      }
+    } catch (e) {
+      ToastAndroid.show('Network error while saving category.', ToastAndroid.SHORT);
+    }
+  };
+
   // Notifications state
   const [budgetAlerts, setBudgetAlerts] = useState(false);
   const [billReminders, setBillReminders] = useState(false);
@@ -40,23 +80,42 @@ const Settings = ({ navigation }: any) => {
         const syncVal = await AsyncStorage.getItem(`@auto_sync_${userId}`);
         if (syncVal !== null) setAutoSyncEnabled(syncVal === 'true');
 
-        const profileVal = await AsyncStorage.getItem(`@profile_${userId}`);
-        if (profileVal) {
-          const profile = JSON.parse(profileVal);
-          setName(profile.name || '');
-          setEmail(profile.email || '');
-          setPhone(profile.phone || '');
-        } else {
-          // Default mock values
-          setName(userId || 'User');
-          setEmail(`${userId || 'user'}@example.com`);
-        }
-
         const notifVal = await AsyncStorage.getItem(`@notifs_${userId}`);
         if (notifVal) {
           const notifs = JSON.parse(notifVal);
           setBudgetAlerts(notifs.budgetAlerts || false);
           setBillReminders(notifs.billReminders || false);
+        }
+
+        // Fetch user profile from backend
+        const profileRes = await apiClient('/auth/v1/profile', {
+          baseUrl: AUTH_API_BASE_URL,
+          method: 'GET'
+        });
+        if (profileRes.ok) {
+          const profile = await profileRes.json();
+          setName(`${profile.firstName || ''} ${profile.lastName || ''}`.trim());
+          setEmail(profile.email || '');
+          setPhone(profile.phoneNumber ? String(profile.phoneNumber) : '');
+        } else {
+          setName(userId || 'User');
+          setEmail(`${userId || 'user'}@example.com`);
+        }
+
+        // Fetch categories from backend
+        const categoriesRes = await apiClient(`/expense/v1/categories?userId=${userId}`, {
+          baseUrl: EXPENSE_API_BASE_URL,
+          method: 'GET'
+        });
+        if (categoriesRes.ok) {
+          const cats = await categoriesRes.json();
+          if (cats && cats.length > 0) {
+            const allCats = ['Food', 'Transport', 'Shopping', 'Bills', 'Entertainment', 'Health', 'General', 'Salary'];
+            cats.forEach((c: any) => {
+              if (!allCats.includes(c.name)) allCats.push(c.name);
+            });
+            setCategoriesList(allCats);
+          }
         }
       } catch (e) {
         console.warn('Failed to load settings', e);
@@ -77,14 +136,32 @@ const Settings = ({ navigation }: any) => {
   const handleSaveProfile = async () => {
     setIsSavingProfile(true);
     try {
-      await AsyncStorage.setItem(`@profile_${userId}`, JSON.stringify({ name, email, phone }));
-      // Simulate network request since backend endpoint doesn't exist yet
-      setTimeout(() => {
-        setIsSavingProfile(false);
-        ToastAndroid.show('Profile updated locally.', ToastAndroid.SHORT);
-      }, 500);
+      const parts = name.trim().split(' ');
+      const firstName = parts[0] || '';
+      const lastName = parts.length > 1 ? parts.slice(1).join(' ') : '';
+      
+      const payload = {
+        firstName,
+        lastName,
+        email,
+        phone_number: phone ? parseInt(phone) : null
+      };
+      
+      const response = await apiClient('/auth/v1/profile', {
+        baseUrl: AUTH_API_BASE_URL,
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        ToastAndroid.show('Profile updated in cloud.', ToastAndroid.SHORT);
+      } else {
+        ToastAndroid.show('Failed to update profile.', ToastAndroid.SHORT);
+      }
     } catch (e) {
       console.warn('Failed to save profile', e);
+      ToastAndroid.show('Network error updating profile.', ToastAndroid.SHORT);
+    } finally {
       setIsSavingProfile(false);
     }
   };
@@ -185,25 +262,85 @@ const Settings = ({ navigation }: any) => {
         </Card>
         </FadeInView>
 
-        {/* Sync Settings */}
+        {/* Preferences Settings */}
         <FadeInView delay={200}>
           <Typography variant="captionMono" style={dynamicStyles.sectionTitle}>PREFERENCES</Typography>
           <Card variant="soft" style={styles.card}>
-          <View style={styles.row}>
-            <View style={{ flex: 1 }}>
-              <Typography variant="bodyMdStrong">Auto-Sync SMS</Typography>
-              <Typography variant="caption" style={{ color: colors.mute }}>
-                Scan inbox for new bank messages in background.
-              </Typography>
+            <View style={styles.row}>
+              <View style={{ flex: 1 }}>
+                <Typography variant="bodyMdStrong">Auto-Sync SMS</Typography>
+                <Typography variant="caption" style={{ color: colors.mute }}>
+                  Scan inbox for new bank messages in background.
+                </Typography>
+              </View>
+              <Switch
+                value={autoSyncEnabled}
+                onValueChange={toggleAutoSync}
+                trackColor={{ false: colors.canvas, true: colors.primary }}
+                thumbColor={colors.onPrimary}
+              />
             </View>
-            <Switch
-              value={autoSyncEnabled}
-              onValueChange={toggleAutoSync}
-              trackColor={{ false: colors.canvas, true: colors.primary }}
-              thumbColor={colors.onPrimary}
-            />
-          </View>
-        </Card>
+            <View style={[styles.subRow, { borderBottomWidth: 0, paddingVertical: spacing.md }]}>
+              <View style={{ flex: 1 }}>
+                <Typography variant="bodyMdStrong">Default Currency</Typography>
+                <Typography variant="caption" style={{ color: colors.mute }}>Choose default display currency.</Typography>
+              </View>
+              <View style={[styles.currencyOptions, { backgroundColor: colors.canvasSoft2 }]}>
+                {(['INR', 'USD', 'EUR'] as const).map((curr) => (
+                  <TouchableOpacity
+                    key={curr}
+                    style={[
+                      styles.currencyOptionButton,
+                      currency === curr && { backgroundColor: colors.primary }
+                    ]}
+                    onPress={() => setCurrency(curr)}
+                  >
+                    <Typography
+                      variant="bodySmStrong"
+                      style={{ color: currency === curr ? colors.onPrimary : colors.text }}
+                    >
+                      {curr}
+                    </Typography>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </Card>
+        </FadeInView>
+
+        {/* Categories Section */}
+        <FadeInView delay={250}>
+          <Typography variant="captionMono" style={dynamicStyles.sectionTitle}>CATEGORIES</Typography>
+          <Card variant="soft" style={styles.card}>
+            <TouchableOpacity onPress={() => toggleSection('categories')} style={styles.row}>
+              <View>
+                <Typography variant="bodyMdStrong">Manage Categories</Typography>
+                <Typography variant="caption" style={{ color: colors.mute }}>View and add transaction categories</Typography>
+              </View>
+            </TouchableOpacity>
+            
+            {expandedSection === 'categories' && (
+              <View style={[styles.expandedContent, dynamicStyles.expandedContent]}>
+                <View style={styles.categoryChipsList}>
+                  {categoriesList.map((cat) => (
+                    <View key={cat} style={[styles.categoryManageChip, { backgroundColor: colors.canvasSoft2 }]}>
+                      <Typography variant="captionMono" style={{ color: colors.text }}>{cat}</Typography>
+                    </View>
+                  ))}
+                </View>
+                <View style={{ flexDirection: 'row', marginTop: spacing.md, alignItems: 'center' }}>
+                  <TextInput
+                    style={[styles.input, dynamicStyles.input, { flex: 1, marginRight: spacing.sm }]}
+                    value={newCategory}
+                    onChangeText={setNewCategory}
+                    placeholder="New category name..."
+                    placeholderTextColor={colors.mute}
+                  />
+                  <Button title="Add" onPress={handleAddCategory} />
+                </View>
+              </View>
+            )}
+          </Card>
         </FadeInView>
 
         {/* Account Profile */}
@@ -261,45 +398,92 @@ const Settings = ({ navigation }: any) => {
           </Card>
         </FadeInView>
 
-        {/* Notifications */}
-        <FadeInView delay={400}>
-          <Typography variant="captionMono" style={dynamicStyles.sectionTitle}>ALERTS</Typography>
+        {/* Security Section */}
+        <FadeInView delay={350}>
+          <Typography variant="captionMono" style={dynamicStyles.sectionTitle}>SECURITY</Typography>
           <Card variant="soft" style={styles.card}>
-          <TouchableOpacity onPress={() => toggleSection('notifications')} style={styles.row}>
-            <View>
-              <Typography variant="bodyMdStrong">Notifications</Typography>
-              <Typography variant="caption" style={{ color: colors.mute }}>Push alerts and reminders</Typography>
-            </View>
-          </TouchableOpacity>
-          
-          {expandedSection === 'notifications' && (
-            <View style={[styles.expandedContent, dynamicStyles.expandedContent]}>
-              <View style={[styles.subRow, dynamicStyles.subRow]}>
-                <View style={{ flex: 1 }}>
-                  <Typography variant="bodyMdStrong">Budget Alerts</Typography>
-                  <Typography variant="caption" style={{ color: colors.mute }}>Get notified when approaching category limits</Typography>
-                </View>
-                <Switch
-                  value={budgetAlerts}
-                  onValueChange={(val) => toggleNotification('budgetAlerts', val)}
-                  trackColor={{ false: colors.canvas, true: colors.primary }}
-                  thumbColor={colors.onPrimary}
-                />
+            <TouchableOpacity onPress={() => toggleSection('security')} style={styles.row}>
+              <View>
+                <Typography variant="bodyMdStrong">Change Password</Typography>
+                <Typography variant="caption" style={{ color: colors.mute }}>Update your account security password</Typography>
               </View>
-              <View style={[styles.subRow, { borderBottomWidth: 0 }]}>
-                <View style={{ flex: 1 }}>
-                  <Typography variant="bodyMdStrong">Bill Reminders</Typography>
-                  <Typography variant="caption" style={{ color: colors.mute }}>Reminders for recurring expenses</Typography>
-                </View>
-                <Switch
-                  value={billReminders}
-                  onValueChange={(val) => toggleNotification('billReminders', val)}
-                  trackColor={{ false: colors.canvas, true: colors.primary }}
-                  thumbColor={colors.onPrimary}
+            </TouchableOpacity>
+            
+            {expandedSection === 'security' && (
+              <View style={[styles.expandedContent, dynamicStyles.expandedContent]}>
+                <Typography variant="caption" style={[styles.label, { color: colors.body }]}>Current Password</Typography>
+                <TextInput
+                  style={[styles.input, dynamicStyles.input]}
+                  secureTextEntry
+                  value={oldPassword}
+                  onChangeText={setOldPassword}
+                  placeholder="••••••••"
+                  placeholderTextColor={colors.mute}
                 />
+                <Typography variant="caption" style={[styles.label, { color: colors.body }]}>New Password</Typography>
+                <TextInput
+                  style={[styles.input, dynamicStyles.input]}
+                  secureTextEntry
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  placeholder="••••••••"
+                  placeholderTextColor={colors.mute}
+                />
+                <View style={{ marginTop: spacing.md }}>
+                  <Button 
+                    title="Update Password" 
+                    onPress={() => {
+                      if (!oldPassword || !newPassword) {
+                        ToastAndroid.show('Please fill in both fields', ToastAndroid.SHORT);
+                        return;
+                      }
+                      setOldPassword('');
+                      setNewPassword('');
+                      ToastAndroid.show('Password updated successfully (Simulated)', ToastAndroid.SHORT);
+                    }} 
+                  />
+                </View>
               </View>
-            </View>
-          )}
+            )}
+          </Card>
+        </FadeInView>
+
+        {/* Data & Privacy Section */}
+        <FadeInView delay={400}>
+          <Typography variant="captionMono" style={dynamicStyles.sectionTitle}>DATA & PRIVACY</Typography>
+          <Card variant="soft" style={styles.card}>
+            <TouchableOpacity onPress={() => exportToCSV(expenses)} style={styles.row}>
+              <View>
+                <Typography variant="bodyMdStrong">Export Data to CSV</Typography>
+                <Typography variant="caption" style={{ color: colors.mute }}>Download all transactions for Excel</Typography>
+              </View>
+              <ChevronRight color={colors.mute} size={20} />
+            </TouchableOpacity>
+          </Card>
+        </FadeInView>
+
+        {/* About Section */}
+        <FadeInView delay={450}>
+          <Typography variant="captionMono" style={dynamicStyles.sectionTitle}>ABOUT</Typography>
+          <Card variant="soft" style={styles.card}>
+            <TouchableOpacity onPress={() => toggleSection('about')} style={styles.row}>
+              <View>
+                <Typography variant="bodyMdStrong">About Expense AI</Typography>
+                <Typography variant="caption" style={{ color: colors.mute }}>Version and legal info</Typography>
+              </View>
+            </TouchableOpacity>
+            
+            {expandedSection === 'about' && (
+              <View style={[styles.expandedContent, dynamicStyles.expandedContent]}>
+                <Typography variant="bodyMd" style={{ color: colors.text }}>Version 1.0.0</Typography>
+                <Typography variant="caption" style={{ color: colors.mute, marginTop: spacing.xs }}>
+                  A lightweight intelligent finance tracker designed to auto-scan your SMS bank alerts and group transactions with AI.
+                </Typography>
+                <Typography variant="captionMono" style={{ color: colors.mute, marginTop: spacing.sm }}>
+                  Designed & Developed by Nitish.
+                </Typography>
+              </View>
+            )}
           </Card>
         </FadeInView>
         
@@ -385,6 +569,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     fontSize: 16,
+  },
+  currencyOptions: {
+    flexDirection: 'row',
+    borderRadius: rounded.md,
+    padding: 2,
+    width: 150,
+  },
+  currencyOptionButton: {
+    flex: 1,
+    paddingVertical: spacing.xs,
+    alignItems: 'center',
+    borderRadius: rounded.sm,
+  },
+  categoryChipsList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: spacing.xs,
+  },
+  categoryManageChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: rounded.full,
+    marginRight: spacing.xs,
+    marginBottom: spacing.xs,
   },
   fabContainer: {
     position: 'absolute',

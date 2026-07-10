@@ -20,19 +20,21 @@ const CATEGORIES = ['Food', 'Transport', 'Shopping', 'Bills', 'Entertainment', '
 const TransactionDetail = ({ route, navigation }: any) => {
   const { transaction } = route.params as { transaction: Expense };
   const { userId } = useContext(AuthContext);
-  const { updateExpenseLocally, removeExpenseLocally } = useContext(ExpenseContext);
+  const { expenses, updateExpenseLocally, removeExpenseLocally } = useContext(ExpenseContext);
   const { showDialog } = useDialog();
   const { colors } = useTheme();
+
+  const currentTransaction = expenses.find(e => e.id === transaction.id) || transaction;
 
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   // Form states
-  const [amount, setAmount] = useState(Math.abs(transaction.amount).toString());
-  const [type, setType] = useState<'expense' | 'income'>(transaction.amount < 0 ? 'expense' : 'income');
-  const [merchant, setMerchant] = useState(transaction.merchant);
-  const [category, setCategory] = useState(transaction.category);
+  const [amount, setAmount] = useState(Math.abs(currentTransaction.amount).toString());
+  const [type, setType] = useState<'expense' | 'income'>(currentTransaction.amount < 0 ? 'expense' : 'income');
+  const [merchant, setMerchant] = useState(currentTransaction.merchant);
+  const [category, setCategory] = useState(currentTransaction.category);
 
   const handleSave = async () => {
     if (!amount || !merchant) {
@@ -46,13 +48,13 @@ const TransactionDetail = ({ route, navigation }: any) => {
 
       const payload = {
         amount: String(finalAmount), // Backend expects string right now based on our findings
-        currency: transaction.currency || 'INR',
+        currency: currentTransaction.currency || 'INR',
         category: category || 'General',
         merchant: merchant,
         userId: userId,
       };
 
-      const response = await apiClient(`/expense/v1/${transaction.id}`, {
+      const response = await apiClient(`/expense/v1/${currentTransaction.id}`, {
         method: 'PUT',
         baseUrl: EXPENSE_API_BASE_URL,
         body: JSON.stringify(payload)
@@ -60,7 +62,7 @@ const TransactionDetail = ({ route, navigation }: any) => {
 
       if (response.ok) {
         updateExpenseLocally({
-          ...transaction,
+          ...currentTransaction,
           amount: finalAmount,
           merchant,
           category: category || 'General'
@@ -70,7 +72,7 @@ const TransactionDetail = ({ route, navigation }: any) => {
       } else {
         // Backend doesn't return valid IDs, so updates fail. We mask this with a local update.
         updateExpenseLocally({
-          ...transaction,
+          ...currentTransaction,
           amount: finalAmount,
           merchant,
           category: category || 'General'
@@ -92,23 +94,23 @@ const TransactionDetail = ({ route, navigation }: any) => {
       onConfirm: async () => {
         setDeleting(true);
         try {
-          const response = await apiClient(`/expense/v1/${transaction.id}?userId=${userId}`, {
+          const response = await apiClient(`/expense/v1/${currentTransaction.id}?userId=${userId}`, {
             method: 'DELETE',
             baseUrl: EXPENSE_API_BASE_URL,
           });
 
           if (response.ok) {
-            removeExpenseLocally(transaction.id);
+            removeExpenseLocally(currentTransaction.id);
             navigation.goBack();
           } else {
             // The backend is currently broken and does not return valid IDs in GET requests,
             // so deleting by ID often fails with 400/404. We fallback to local soft-delete.
-            removeExpenseLocally(transaction.id);
+            removeExpenseLocally(currentTransaction.id);
             navigation.goBack();
           }
         } catch (error: any) {
           // Network error or fetch failure, still allow local soft-delete to hide it
-          removeExpenseLocally(transaction.id);
+          removeExpenseLocally(currentTransaction.id);
           navigation.goBack();
         } finally {
           setDeleting(false);
@@ -117,8 +119,8 @@ const TransactionDetail = ({ route, navigation }: any) => {
     });
   };
 
-  const isIncome = transaction.amount > 0;
-  const isAuto = transaction.merchant === 'AI Scanned' || transaction.merchant.includes('Bank');
+  const isIncome = currentTransaction.amount > 0;
+  const isAuto = currentTransaction.merchant === 'AI Scanned' || currentTransaction.merchant.includes('Bank');
 
   const dynamicStyles = {
     container: {
@@ -155,11 +157,30 @@ const TransactionDetail = ({ route, navigation }: any) => {
         </TouchableOpacity>
         <Typography variant="displaySm">Detail</Typography>
         {!isEditing ? (
-          <TouchableOpacity onPress={() => setIsEditing(true)} style={styles.iconButton}>
+          <TouchableOpacity 
+            onPress={() => {
+              setAmount(Math.abs(currentTransaction.amount).toString());
+              setType(currentTransaction.amount < 0 ? 'expense' : 'income');
+              setMerchant(currentTransaction.merchant);
+              setCategory(currentTransaction.category);
+              setIsEditing(true);
+            }} 
+            style={styles.iconButton}
+          >
             <Edit2 color={colors.ink} size={20} />
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity onPress={() => setIsEditing(false)} style={styles.iconButton}>
+          <TouchableOpacity 
+            onPress={() => {
+              // Reset values on cancel
+              setAmount(Math.abs(currentTransaction.amount).toString());
+              setType(currentTransaction.amount < 0 ? 'expense' : 'income');
+              setMerchant(currentTransaction.merchant);
+              setCategory(currentTransaction.category);
+              setIsEditing(false);
+            }} 
+            style={styles.iconButton}
+          >
             <Typography style={{ color: colors.primary }}>Cancel</Typography>
           </TouchableOpacity>
         )}
@@ -169,7 +190,7 @@ const TransactionDetail = ({ route, navigation }: any) => {
         style={{ flex: 1 }} 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
           <FadeInView delay={100}>
             <Card style={styles.contentCard}>
               {/* Large Amount Display */}
@@ -206,7 +227,7 @@ const TransactionDetail = ({ route, navigation }: any) => {
                 <>
                   <Typography style={[styles.currencySymbol, { color: isIncome ? colors.success : colors.text }]}>₹</Typography>
                   <Typography variant="displayLg" style={[styles.amountText, { color: isIncome ? colors.success : colors.text }]}>
-                    {Math.abs(transaction.amount).toFixed(2)}
+                    {Math.abs(currentTransaction.amount).toFixed(2)}
                   </Typography>
                 </>
               )}
@@ -232,7 +253,7 @@ const TransactionDetail = ({ route, navigation }: any) => {
                     {isEditing ? (
                       <Input value={merchant} onChangeText={setMerchant} placeholder="Merchant name" />
                     ) : (
-                      <Typography style={[styles.fieldValue, { color: colors.text }]}>{transaction.merchant}</Typography>
+                      <Typography style={[styles.fieldValue, { color: colors.text }]}>{currentTransaction.merchant}</Typography>
                     )}
                   </View>
                 </FadeInView>
@@ -263,7 +284,7 @@ const TransactionDetail = ({ route, navigation }: any) => {
                       </View>
                     </View>
                   ) : (
-                    <Typography style={[styles.fieldValue, { color: colors.text }]}>{transaction.category || 'General'}</Typography>
+                    <Typography style={[styles.fieldValue, { color: colors.text }]}>{currentTransaction.category || 'General'}</Typography>
                     )}
                   </View>
                 </FadeInView>
@@ -273,7 +294,7 @@ const TransactionDetail = ({ route, navigation }: any) => {
                   <View style={styles.fieldContent}>
                   <Typography style={[styles.fieldLabel, { color: colors.mute }]}>Date</Typography>
                   <Typography style={[styles.fieldValue, { color: colors.text }]}>
-                    {dayjs(transaction.created_at || transaction.createdAt || new Date()).format('MMMM D, YYYY • h:mm A')}
+                    {dayjs(currentTransaction.created_at || currentTransaction.createdAt || new Date()).format('MMMM D, YYYY • h:mm A')}
                     </Typography>
                   </View>
                 </FadeInView>
@@ -283,7 +304,7 @@ const TransactionDetail = ({ route, navigation }: any) => {
                   <View style={styles.fieldContent}>
                   <Typography style={[styles.fieldLabel, { color: colors.mute }]}>ID</Typography>
                   <Typography style={[styles.fieldValue, { fontSize: 12, color: colors.mute }]}>
-                    {transaction.id}
+                    {currentTransaction.id}
                   </Typography>
                   </View>
                 </FadeInView>
@@ -291,11 +312,11 @@ const TransactionDetail = ({ route, navigation }: any) => {
 
               {/* Action Buttons */}
               {isEditing && (
-                <FadeInView delay={600}>
+                <FadeInView delay={600} style={{ width: '100%' }}>
                   <Button
-                    title="Save Changes"
+                    title={loading ? "Saving..." : "Save Changes"}
                     onPress={handleSave}
-                    loading={loading}
+                    disabled={loading}
                     style={styles.saveButton}
                   />
                 </FadeInView>
@@ -459,6 +480,10 @@ const styles = StyleSheet.create({
   },
   categoryChipText: {
     fontSize: 12,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: spacing['4xl'],
   },
 });
 

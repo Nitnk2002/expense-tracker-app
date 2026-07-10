@@ -21,6 +21,55 @@ interface ExpenseContextType {
   removeExpenseLocally: (id: string) => void;
 }
 
+const MERCHANT_CATEGORIES: Record<string, string> = {
+  swiggy: 'Food',
+  zomato: 'Food',
+  starbucks: 'Food',
+  mcdonald: 'Food',
+  restaurant: 'Food',
+  eats: 'Food',
+  food: 'Food',
+  uber: 'Transport',
+  ola: 'Transport',
+  rapido: 'Transport',
+  metro: 'Transport',
+  railway: 'Transport',
+  cab: 'Transport',
+  taxi: 'Transport',
+  amazon: 'Shopping',
+  flipkart: 'Shopping',
+  myntra: 'Shopping',
+  retail: 'Shopping',
+  grocery: 'Shopping',
+  supermarket: 'Shopping',
+  store: 'Shopping',
+  netflix: 'Entertainment',
+  spotify: 'Entertainment',
+  hotstar: 'Entertainment',
+  prime: 'Entertainment',
+  electricity: 'Bills',
+  bill: 'Bills',
+  insurance: 'Bills',
+  recharge: 'Bills',
+  telecom: 'Bills',
+  hospital: 'Health',
+  pharmacy: 'Health',
+  clinic: 'Health',
+  medical: 'Health',
+  salary: 'Salary',
+  employer: 'Salary',
+};
+
+const autoCategorize = (merchant: string): string => {
+  const name = merchant.toLowerCase();
+  for (const [key, category] of Object.entries(MERCHANT_CATEGORIES)) {
+    if (name.includes(key)) {
+      return category;
+    }
+  }
+  return 'General';
+};
+
 export const ExpenseContext = createContext<ExpenseContextType>({
   expenses: [],
   loading: false,
@@ -63,6 +112,7 @@ export const ExpenseProvider = ({ children }: { children: ReactNode }) => {
 
       if (response.ok) {
         const data = await response.json();
+        console.log("FETCHED EXPENSES FROM BACKEND:", data);
         
         let deletedSet = new Set<string>();
         try {
@@ -79,11 +129,16 @@ export const ExpenseProvider = ({ children }: { children: ReactNode }) => {
           let parsedAmount = match ? parseFloat(match[0]) : 0;
           if (isNegative) parsedAmount = -parsedAmount;
           
+          const merchant = exp.merchant || 'Unknown Merchant';
+          const category = (!exp.category || exp.category === 'General')
+            ? autoCategorize(merchant)
+            : exp.category;
+
           return {
             id: exp.external_id || index.toString(),
-            category: exp.category || 'General',
+            category: category,
             amount: parsedAmount,
-            merchant: exp.merchant || 'Unknown Merchant',
+            merchant: merchant,
             currency: exp.currency || 'INR',
             created_at: exp.created_at,
           };
@@ -92,6 +147,9 @@ export const ExpenseProvider = ({ children }: { children: ReactNode }) => {
         setExpenses(mappedExpenses);
         // Overwrite local cache with fresh data
         await AsyncStorage.setItem(`@expenses_${userId}`, JSON.stringify(mappedExpenses));
+      } else {
+        const errText = await response.text();
+        console.error("FETCH EXPENSES FAILED:", response.status, errText);
       }
     } catch (err) {
       console.error('Error syncing expenses:', err);

@@ -14,7 +14,7 @@ import { ExpenseContext } from '../context/ExpenseContext';
 import { apiClient, EXPENSE_API_BASE_URL } from '../api/apiClient';
 import { useAutoScan } from '../hooks/useAutoScan';
 
-const DS_API_BASE_URL = 'http://177.171.101.42:8010';
+const DS_API_BASE_URL = 'https://nitnkumar-expense-ai.hf.space/ds';
 
 const AddExpense = ({ navigation }: any) => {
   const { colors, isDarkMode } = useTheme();
@@ -27,6 +27,33 @@ const AddExpense = ({ navigation }: any) => {
   const [category, setCategory] = useState('');
   const [loading, setLoading] = useState(false);
   const [lookbackDays, setLookbackDays] = useState<number>(1);
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [notes, setNotes] = useState('');
+  const [categoriesList, setCategoriesList] = useState(['Food', 'Transport', 'Shopping', 'Bills', 'Entertainment', 'Health', 'General', 'Salary']);
+
+  React.useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const categoriesRes = await apiClient(`/expense/v1/categories?userId=${userId}`, {
+          baseUrl: EXPENSE_API_BASE_URL,
+          method: 'GET'
+        });
+        if (categoriesRes.ok) {
+          const cats = await categoriesRes.json();
+          if (cats && cats.length > 0) {
+            const allCats = ['Food', 'Transport', 'Shopping', 'Bills', 'Entertainment', 'Health', 'General', 'Salary'];
+            cats.forEach((c: any) => {
+              if (!allCats.includes(c.name)) allCats.push(c.name);
+            });
+            setCategoriesList(allCats);
+          }
+        }
+      } catch (e) {
+        // Silent fail, just use default categories
+      }
+    };
+    if (userId) fetchCategories();
+  }, [userId]);
 
   const handleSave = async () => {
     if (!amount || !merchant) {
@@ -43,7 +70,8 @@ const AddExpense = ({ navigation }: any) => {
         amount: finalAmount,
         merchant: merchant,
         currency: 'INR',
-        externalId: Date.now().toString()
+        externalId: Date.now().toString(),
+        category: type === 'expense' ? (category || 'General') : 'Income',
       };
 
       const response = await apiClient('/expense/v1/', {
@@ -56,19 +84,20 @@ const AddExpense = ({ navigation }: any) => {
       if (response.ok) {
         ToastAndroid.show('Transaction saved successfully!', ToastAndroid.SHORT);
         
-
         addExpenseLocally({
           id: expenseData.externalId,
           amount: expenseData.amount,
           merchant: expenseData.merchant,
-          category: category || 'General',
+          category: expenseData.category,
           currency: expenseData.currency,
-          created_at: new Date().toISOString()
+          created_at: new Date(date).toISOString()
         });
 
         setAmount('');
         setMerchant('');
         setCategory('');
+        setNotes('');
+        setDate(new Date().toISOString().split('T')[0]);
       } else {
         ToastAndroid.show('Failed to save transaction', ToastAndroid.SHORT);
       }
@@ -105,6 +134,16 @@ const AddExpense = ({ navigation }: any) => {
     segmentActiveScan: {
       backgroundColor: colors.primary,
     },
+    categoryChip: {
+      backgroundColor: colors.canvasSoft2,
+    },
+    categoryChipActive: {
+      backgroundColor: colors.primary,
+    },
+    categoryChipTextActive: {
+      color: colors.onPrimary,
+      fontWeight: 'bold',
+    },
   };
 
   return (
@@ -120,7 +159,7 @@ const AddExpense = ({ navigation }: any) => {
               <Typography variant="bodyMdStrong" style={{ marginBottom: spacing.md }}>Auto-Scan SMS</Typography>
               
               <View style={[styles.segmentedControl, dynamicStyles.segmentedControl]}>
-                {[1, 7, 30].map(days => (
+                {[1, 7, 30, 9999].map(days => (
                   <TouchableOpacity 
                     key={days}
                     style={[styles.segment, lookbackDays === days && dynamicStyles.segmentActiveScan]}
@@ -128,7 +167,7 @@ const AddExpense = ({ navigation }: any) => {
                     disabled={isScanning}
                   >
                     <Typography variant="bodySmStrong" style={{ color: lookbackDays === days ? colors.onPrimary : colors.ink }}>
-                      {days === 1 ? '1 Day' : `${days} Days`}
+                      {days === 1 ? '1 Day' : days === 9999 ? 'All' : `${days} Days`}
                     </Typography>
                   </TouchableOpacity>
                 ))}
@@ -197,12 +236,56 @@ const AddExpense = ({ navigation }: any) => {
                 />
               </View>
 
+              {type === 'expense' && (
+                <View style={styles.formGroup}>
+                  <Typography variant="captionMono" style={styles.label}>CATEGORY</Typography>
+                  <Input 
+                    placeholder="e.g. Food, Transport" 
+                    value={category} 
+                    onChangeText={setCategory} 
+                  />
+                  <View style={styles.categoryChips}>
+                    {categoriesList.map(cat => (
+                      <TouchableOpacity 
+                        key={cat} 
+                        style={[
+                          styles.categoryChip, 
+                          dynamicStyles.categoryChip, 
+                          category === cat && dynamicStyles.categoryChipActive
+                        ]}
+                        onPress={() => setCategory(cat)}
+                      >
+                        <Typography style={[
+                          styles.categoryChipText, 
+                          { color: colors.text }, 
+                          category === cat && dynamicStyles.categoryChipTextActive as any
+                        ]}>
+                          {cat}
+                        </Typography>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
               <View style={styles.formGroup}>
-                <Typography variant="captionMono" style={styles.label}>CATEGORY</Typography>
+                <Typography variant="captionMono" style={styles.label}>DATE (YYYY-MM-DD)</Typography>
                 <Input 
-                  placeholder="e.g. Food, Transport" 
-                  value={category} 
-                  onChangeText={setCategory} 
+                  placeholder="YYYY-MM-DD" 
+                  value={date} 
+                  onChangeText={setDate} 
+                />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Typography variant="captionMono" style={styles.label}>NOTES</Typography>
+                <Input 
+                  placeholder="Add details..." 
+                  value={notes} 
+                  onChangeText={setNotes} 
+                  style={{ minHeight: 60, textAlignVertical: 'top' }}
+                  multiline={true}
+                  numberOfLines={3}
                 />
               </View>
 
@@ -210,7 +293,21 @@ const AddExpense = ({ navigation }: any) => {
                 {loading ? (
                   <ActivityIndicator size="large" color={colors.primary} />
                 ) : (
-                  <Button title="Save Transaction" onPress={handleSave} />
+                  <View style={styles.buttonRow}>
+                    <Button 
+                      title="Cancel" 
+                      onPress={() => {
+                        setAmount('');
+                        setMerchant('');
+                        setCategory('');
+                        setNotes('');
+                        setDate(new Date().toISOString().split('T')[0]);
+                      }} 
+                      variant="secondary"
+                      style={{ flex: 1, marginRight: spacing.sm }}
+                    />
+                    <Button title="Save" onPress={handleSave} style={{ flex: 1 }} />
+                  </View>
                 )}
               </View>
             </Card>
@@ -280,6 +377,26 @@ const styles = StyleSheet.create({
   divider: {
     marginVertical: spacing.lg,
     alignItems: 'center',
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  categoryChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: spacing.xs,
+  },
+  categoryChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: rounded.full,
+    marginRight: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  categoryChipText: {
+    fontSize: 12,
   },
   fabContainer: {
     position: 'absolute',

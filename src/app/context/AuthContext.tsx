@@ -53,9 +53,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logout = async () => {
-    await AsyncStorage.removeItem('accessToken');
-    await AsyncStorage.removeItem('refreshToken');
-    await AsyncStorage.removeItem('userId');
+    try {
+      await AsyncStorage.clear();
+    } catch (e) {
+      console.warn('Failed to clear AsyncStorage', e);
+    }
     setUserId(null);
     setIsLoggedIn(false);
   };

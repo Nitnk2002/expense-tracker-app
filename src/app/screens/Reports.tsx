@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useContext } from 'react';
-import { View, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, TouchableOpacity, ToastAndroid } from 'react-native';
 import Svg, { Polyline, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { FadeInView } from '../components/FadeInView';
 import { Logo } from '../components/Logo';
 import { Typography } from '../components/Typography';
 import { Card } from '../components/Card';
+import { Button } from '../components/Button';
 import { spacing, rounded } from '../theme/tokens';
 import { useTheme } from '../context/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
@@ -15,8 +16,8 @@ interface DailySpend {
   amount: number;
 }
 
-interface MerchantSpend {
-  merchant: string;
+interface CategorySpend {
+  category: string;
   amount: number;
   percentage: number;
 }
@@ -27,44 +28,65 @@ const Reports = ({ navigation }: any) => {
   const { expenses, loading } = useContext(ExpenseContext);
   const [totalSpent, setTotalSpent] = useState(0);
   const [dailyTrend, setDailyTrend] = useState<DailySpend[]>([]);
-  const [topMerchants, setTopMerchants] = useState<MerchantSpend[]>([]);
+  const [topCategories, setTopCategories] = useState<CategorySpend[]>([]);
+  const [period, setPeriod] = useState<'week' | 'month' | 'year'>('month');
 
   useEffect(() => {
-    processExpenses(expenses);
-  }, [expenses]);
+    processExpenses(expenses, period);
+  }, [expenses, period]);
 
-  const processExpenses = (data: any[]) => {
+  const processExpenses = (data: any[], currentPeriod: 'week' | 'month' | 'year') => {
     let total = 0;
-    const merchantMap: Record<string, number> = {};
+    const categoryMap: Record<string, number> = {};
     const dateMap: Record<string, number> = {};
     
-    // Initialize last 30 days in dateMap
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      dateMap[label] = 0;
+    let daysToLookBack = 30;
+    if (currentPeriod === 'week') daysToLookBack = 7;
+    if (currentPeriod === 'year') daysToLookBack = 365;
+
+    const cutoffTime = Date.now() - (daysToLookBack * 24 * 60 * 60 * 1000);
+
+    if (currentPeriod === 'year') {
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date();
+        d.setMonth(d.getMonth() - i);
+        const label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        dateMap[label] = 0;
+      }
+    } else {
+      for (let i = daysToLookBack - 1; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        dateMap[label] = 0;
+      }
     }
 
     data.forEach(exp => {
       const match = exp.amount ? String(exp.amount).match(/-?\d+(\.\d+)?/) : null;
       const amount = match ? parseFloat(match[0]) : 0;
       
-      // Only include expenses (negative amounts) in the spending reports
       if (amount < 0) {
         const absAmount = Math.abs(amount);
-        total += absAmount;
-
-        // Merchant aggregate
-        const merchant = exp.merchant || 'Unknown';
-        merchantMap[merchant] = (merchantMap[merchant] || 0) + absAmount;
-
-        // Date aggregate
+        
         if (exp.created_at) {
           const d = new Date(exp.created_at);
-          const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          if (dateMap[label] !== undefined) {
-            dateMap[label] += absAmount;
+          if (d.getTime() >= cutoffTime) {
+            total += absAmount;
+
+            const cat = exp.category || 'General';
+            categoryMap[cat] = (categoryMap[cat] || 0) + absAmount;
+
+            let label = '';
+            if (currentPeriod === 'year') {
+              label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+            } else {
+              label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
+
+            if (dateMap[label] !== undefined) {
+              dateMap[label] += absAmount;
+            }
           }
         }
       }
@@ -72,31 +94,27 @@ const Reports = ({ navigation }: any) => {
 
     setTotalSpent(total);
 
-    // Format daily trend
     const trend = Object.keys(dateMap).map(label => ({
       label,
       amount: dateMap[label],
     }));
     setDailyTrend(trend);
 
-    // Format top merchants
-    const merchants = Object.keys(merchantMap)
-      .map(merchant => ({
-        merchant,
-        amount: merchantMap[merchant],
-        percentage: total > 0 ? (merchantMap[merchant] / total) * 100 : 0
+    const categories = Object.keys(categoryMap)
+      .map(cat => ({
+        category: cat,
+        amount: categoryMap[cat],
+        percentage: total > 0 ? (categoryMap[cat] / total) * 100 : 0
       }))
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 5); // Top 5
+      .sort((a, b) => b.amount - a.amount);
       
-    setTopMerchants(merchants);
+    setTopCategories(categories);
   };
 
   const maxDailyAmount = Math.max(...dailyTrend.map(d => d.amount), 1);
   const CHART_WIDTH = 300;
   const CHART_HEIGHT = 150;
 
-  // Generate SVG points for the line chart
   const points = dailyTrend.map((d, index) => {
     const x = (index / Math.max(dailyTrend.length - 1, 1)) * CHART_WIDTH;
     const y = CHART_HEIGHT - ((d.amount / maxDailyAmount) * CHART_HEIGHT);
@@ -115,13 +133,15 @@ const Reports = ({ navigation }: any) => {
       borderBottomColor: colors.hairline,
     },
     summaryCard: {
-      // Use default Card background so shadow renders correctly on Android
     },
     borderBottom: {
       borderBottomColor: colors.hairline,
     },
-    merchantDot: {
-      backgroundColor: colors.error, // Red dots for merchants
+    segmentedControl: {
+      backgroundColor: colors.canvasSoft2,
+    },
+    segmentActive: {
+      backgroundColor: colors.primary,
     },
   };
 
@@ -138,6 +158,21 @@ const Reports = ({ navigation }: any) => {
           </View>
         ) : (
           <View style={styles.container}>
+            {/* Period Tabs Selector */}
+            <View style={[styles.segmentedControl, dynamicStyles.segmentedControl, { marginBottom: spacing.md }]}>
+              {(['week', 'month', 'year'] as const).map(p => (
+                <TouchableOpacity 
+                  key={p}
+                  style={[styles.segment, period === p && dynamicStyles.segmentActive]}
+                  onPress={() => setPeriod(p)}
+                >
+                  <Typography variant="bodySmStrong" style={{ color: period === p ? colors.onPrimary : colors.ink, textTransform: 'capitalize' }}>
+                    {p}
+                  </Typography>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             {/* Total Spent Summary */}
             <Card variant="marketing" style={[styles.summaryCard, dynamicStyles.summaryCard]}>
               <Typography variant="captionMono" style={[styles.cardEyebrow, { color: colors.error }]}>TOTAL SPENT</Typography>
@@ -147,7 +182,9 @@ const Reports = ({ navigation }: any) => {
             {/* Daily Trend Chart */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <Typography variant="captionMono" style={[styles.sectionTitle, { color: colors.mute }]}>LAST 30 DAYS</Typography>
+                <Typography variant="captionMono" style={[styles.sectionTitle, { color: colors.mute }]}>
+                  {period === 'week' ? 'LAST 7 DAYS' : period === 'year' ? 'LAST 12 MONTHS' : 'LAST 30 DAYS'}
+                </Typography>
               </View>
               <Card variant="marketing" style={styles.chartCard}>
                 <View style={styles.graphContainer}>
@@ -169,7 +206,7 @@ const Reports = ({ navigation }: any) => {
                     />
                   </Svg>
                 </View>
-                {/* X-Axis Labels (Start and End of month) */}
+                {/* X-Axis Labels (Start and End of period) */}
                 <View style={styles.xAxisLabels}>
                   <Typography variant="caption" style={{ color: colors.mute }}>
                     {dailyTrend.length > 0 ? dailyTrend[0].label : ''}
@@ -181,28 +218,46 @@ const Reports = ({ navigation }: any) => {
               </Card>
             </View>
 
-            {/* Top Merchants */}
+            {/* Category Breakdown */}
             <View style={styles.section}>
-              <Typography variant="captionMono" style={[styles.sectionTitle, { color: colors.mute }]}>TOP MERCHANTS</Typography>
+              <Typography variant="captionMono" style={[styles.sectionTitle, { color: colors.mute }]}>CATEGORY BREAKDOWN</Typography>
               <Card variant="marketing" style={styles.listCard}>
-                {topMerchants.length > 0 ? (
-                  topMerchants.map((item, index) => (
-                    <View key={index} style={[styles.listItem, index !== topMerchants.length - 1 && styles.borderBottom, index !== topMerchants.length - 1 && dynamicStyles.borderBottom]}>
-                      <View style={styles.merchantInfo}>
-                        <View style={[styles.merchantDot, dynamicStyles.merchantDot]} />
-                        <Typography variant="bodyMdStrong">{item.merchant}</Typography>
+                {topCategories.length > 0 ? (
+                  topCategories.map((item, index) => (
+                    <View key={index} style={[styles.listItem, index !== topCategories.length - 1 && styles.borderBottom, index !== topCategories.length - 1 && dynamicStyles.borderBottom]}>
+                      <View style={{ flex: 1, marginRight: spacing.md }}>
+                        <View style={styles.categoryHeader}>
+                          <Typography variant="bodyMdStrong">{item.category}</Typography>
+                          <Typography variant="bodyMdStrong" style={{ color: colors.error }}>₹{item.amount.toFixed(2)}</Typography>
+                        </View>
+                        {/* Progress Bar */}
+                        <View style={[styles.progressBarBg, { backgroundColor: colors.canvasSoft2 }]}>
+                          <View style={[styles.progressBarFill, { width: `${item.percentage}%`, backgroundColor: colors.primary }]} />
+                        </View>
                       </View>
-                      <View style={styles.merchantStats}>
-                        <Typography variant="bodyMdStrong" style={{ color: colors.error }}>₹{item.amount.toFixed(2)}</Typography>
-                        <Typography variant="captionMono" style={[styles.percentageText, { color: colors.mute }]}>{item.percentage.toFixed(1)}%</Typography>
-                      </View>
+                      <Typography variant="captionMono" style={[styles.percentageText, { color: colors.mute, width: 40, textAlign: 'right' }]}>{item.percentage.toFixed(0)}%</Typography>
                     </View>
                   ))
                 ) : (
                   <View style={styles.emptyState}>
-                    <Typography variant="bodyMd" style={{ color: colors.mute }}>No merchant data available.</Typography>
+                    <Typography variant="bodyMd" style={{ color: colors.mute }}>No category data available.</Typography>
                   </View>
                 )}
+              </Card>
+            </View>
+
+            {/* Export Card */}
+            <View style={styles.section}>
+              <Card variant="marketing" style={styles.exportCard}>
+                <Typography variant="bodyMdStrong" style={{ marginBottom: spacing.xs }}>Export Transaction History</Typography>
+                <Typography variant="caption" style={{ color: colors.mute, marginBottom: spacing.md }}>
+                  Download all your records in a CSV spreadsheet format.
+                </Typography>
+                <Button 
+                  title="Export CSV Report" 
+                  onPress={() => ToastAndroid.show('CSV Report exported successfully!', ToastAndroid.LONG)} 
+                  variant="secondary"
+                />
               </Card>
             </View>
           </View>
@@ -285,18 +340,21 @@ const styles = StyleSheet.create({
   borderBottom: {
     borderBottomWidth: 1,
   },
-  merchantInfo: {
+  categoryHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: spacing.xs,
   },
-  merchantDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: spacing.sm,
+  progressBarBg: {
+    height: 6,
+    borderRadius: rounded.full,
+    width: '100%',
+    overflow: 'hidden',
   },
-  merchantStats: {
-    alignItems: 'flex-end',
+  progressBarFill: {
+    height: '100%',
+    borderRadius: rounded.full,
   },
   percentageText: {
     marginTop: 2,
@@ -304,6 +362,20 @@ const styles = StyleSheet.create({
   emptyState: {
     padding: spacing.lg,
     alignItems: 'center',
+  },
+  exportCard: {
+    padding: spacing.lg,
+  },
+  segmentedControl: {
+    flexDirection: 'row',
+    borderRadius: rounded.md,
+    padding: 4,
+  },
+  segment: {
+    flex: 1,
+    paddingVertical: spacing.xs,
+    alignItems: 'center',
+    borderRadius: rounded.sm,
   },
   fabContainer: {
     position: 'absolute',

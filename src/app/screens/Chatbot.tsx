@@ -16,7 +16,7 @@ type Message = {
   isUser: boolean;
 };
 
-const DS_API_BASE_URL = 'http://177.171.101.42:8010';
+const DS_API_BASE_URL = 'https://nitnkumar-expense-ai.hf.space/ds';
 
 const Chatbot = ({ navigation }: any) => {
   const { colors } = useTheme();
